@@ -44,7 +44,7 @@ from agent.critique import self_critique, verify
 from agent.diff import step_args
 from agent.plan import SCHEMA, make_plan, revise_plan
 from agent.validator import validate
-from harness.formats import FILL, format_triage_comment, parse_triage_comment, result_paths
+from harness.formats import FILL, parse_triage_comment, result_paths
 from harness.roles import ROLES, arg, tool_for
 from harness.schema import errors as schema_errors
 
@@ -82,9 +82,14 @@ def schema_check(ctx, plan: dict, version: int) -> list[dict]:
     failure is written as a schema line, and comes back as failures for a re-plan."""
     problems = schema_errors({k: v for k, v in plan.items() if k != "meta"}, SCHEMA)
     steps = plan.get("steps") or []
-    if not steps or not isinstance(steps[-1], dict) or role(steps[-1].get("tool")) != "comment":
-        problems.append(f"the plan's last step is not the comment tool, {tool_for('comment')}: the comment "
-                        "comes last")
+    tool_roles = [role(s.get("tool")) if isinstance(s, dict) else None for s in steps]
+    if tool_roles.count("comment") != 1:
+        problems.append("the plan needs exactly one comment step")
+    if tool_roles.count("open_pr") != 1:
+        problems.append("the plan needs exactly one draft PR step")
+    if tool_roles[-2:] != ["open_pr", "comment"]:
+        problems.append(f"the draft PR ({tool_for('open_pr')}) must be immediately before "
+                        f"the final comment ({tool_for('comment')})")
     if problems:
         ctx.trace.event("schema", version=version, errors=problems[:20])
     return [{"step": None, "check": "schema", "error": e} for e in problems[:5]]
@@ -122,6 +127,8 @@ class Executor:
         self.revisions = 0
         self.revised: set[str] = set()   # ids of steps a revision added or changed: the checkpoint follows them
         self.ran: set[str] = set()       # ids of steps that ran and are not to run again
+        self.prepared_comment: dict | None = None   # frozen, approved call arguments
+        self.prepared_file: str | None = None       # file identified by the approved draft
 
     # -- the plan, in order ------------------------------------------------------------
     def next_step(self) -> dict | None:
@@ -131,16 +138,35 @@ class Executor:
         while True:
             step = self.next_step()
             if step is None:
-                return                            # the plan is finished; the runner writes completed
-            if role(step.get("tool")) == "comment":
+                return
+            kind = role(step.get("tool"))
+
+            if kind == "open_pr":
+                # The draft must exist and pass critique before either write.
+                if not self.prepare_comment():
+                    return
+                if self.prepared_file == "none":
+                    self.ctx.trace.event("pr_skipped", step=step.get("id"), reason="file: none")
+                    self.record(step, step_args(step), None)
+                    continue
+                result = self.run_step(step)
+                if result is None:
+                    return
+                if result["status"] != "done":
+                    self.ctx.trace.end("escalated", detail=f"PR step {step.get('id')} failed; comment not posted")
+                    return
+                continue
+
+            if kind == "comment":
                 if not self.comment(step):
                     return
                 continue
+
             first = not any(role(r["tool"]) == "search" for r in self.results)
             result = self.run_step(step)
             if result is None:
-                return                            # halted, and ended escalated
-            if role(step.get("tool")) == "search" and (first or str(step.get("id")) in self.revised):
+                return
+            if kind == "search" and (first or str(step.get("id")) in self.revised):
                 self.checkpoint(CHECKPOINT, any(SOURCE.match(p) for p in result.get("paths") or []))
 
     # -- one step ------------------------------------------------------------------------
@@ -150,6 +176,11 @@ class Executor:
             return self.record(step, args, None, "no_tool")
         args = self.filled(step, args)
         if args is None:
+            return None
+        if (role(tool) == "open_pr" and self.prepared_file is not None
+                and self.prepared_file not in str(args.get(arg("open_pr", "body"), ""))):
+            self.record(step, args, None, "pr_file_mismatch")
+            self.ctx.trace.end("escalated", detail="PR body did not name the approved triage file")
             return None
         result = self.ctx.call_tool(self.calls, tool, args, plan_step=step.get("id"))
         return self.record(step, args, result)
@@ -192,7 +223,10 @@ class Executor:
                 if role(step["tool"]) == "comment":
                     body = arg("comment", "body")
                     label, file = parse_triage_comment(str(filled[body]))
-                    filled[body] = format_triage_comment(label or "bug", file)
+                    if label not in ("bug", "feature", "question", "docs") or file is None:
+                        continue
+                    # Keep the explanation instead of reducing the draft to two header lines.
+                    filled[body] = str(filled[body])
                 return filled
         return None
 
@@ -211,6 +245,10 @@ class Executor:
         if role(step["tool"]) == "comment":
             parts.append("The comment's first two lines must be:\nlabel: <bug | feature | question | docs>\n"
                          "file: <path relative to the repository root, or none>")
+        if role(step["tool"]) == "open_pr" and self.prepared_comment is not None:
+            parts.append(f"The approved draft names this exact file: {self.prepared_file}. "
+                         f"Name it in the PR body, and describe a proposed change only.\n"
+                         f"Approved triage draft: {self.prepared_comment[arg('comment', 'body')]}")
         if note:
             parts.append(note)
         return "\n\n".join(parts + self.context())
@@ -262,17 +300,39 @@ class Executor:
         return True
 
     # -- the comment, and the second pass before it ----------------------------------------------
-    def comment(self, step: dict) -> bool:
-        """Draft, run the second pass, then post once. False when the run has ended."""
-        draft = self.filled(step, step_args(step))
-        if draft is None:
+    def prepare_comment(self) -> bool:
+        """Prepare and critique the final comment before opening any PR."""
+        if self.prepared_comment is not None:
+            return True
+        comment_step = self.plan["steps"][-1]
+        draft = self.filled(comment_step, step_args(comment_step))
+        if draft is None:  # filled() already ended the run as escalated
             return False
-        final = self.second_pass(step, draft) if self.critique else draft
+        final = self.second_pass(comment_step, draft) if self.critique else draft
         if final is None:
-            self.record(step, draft, None, "held")
-            self.ctx.trace.end("escalated", detail=f"the draft still failed the second pass after {MAX_ROUNDS} rounds")
+            self.record(comment_step, draft, None, "held")
+            self.ctx.trace.end("escalated", detail="the comment failed its second pass; neither write ran")
             return False
-        self.record(step, final, self.ctx.call_tool(self.calls, step["tool"], final, plan_step=step.get("id")))
+        label, path = parse_triage_comment(str(final.get(arg("comment", "body"), "")))
+        if label not in ("bug", "feature", "question", "docs") or path is None:
+            self.record(comment_step, final, None, "invalid_comment")
+            self.ctx.trace.end("escalated", detail="the approved comment has no valid label/file headers")
+            return False
+        self.prepared_comment = final
+        self.prepared_file = path
+        return True
+
+    def comment(self, step: dict) -> bool:
+        """Publish the previously approved draft, without regenerating any arguments."""
+        if self.prepared_comment is None:
+            self.ctx.trace.end("escalated", detail="final comment was not prepared before the PR")
+            return False
+        result = self.ctx.call_tool(self.calls, step["tool"], self.prepared_comment,
+                                    plan_step=step.get("id"))
+        recorded = self.record(step, self.prepared_comment, result)
+        if recorded["status"] != "done":
+            self.ctx.trace.end("escalated", detail="final comment failed")
+            return False
         return True
 
     def evidence(self) -> dict:

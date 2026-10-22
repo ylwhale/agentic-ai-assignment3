@@ -21,10 +21,10 @@
 #
 # Then add your model's price line to pricing.yaml and run `make ping`.
 
-provider: null
-model: null
-base_url: null
-api_key_env: null
+provider: openai-compatible
+model: gemini-3.5-flash-lite
+base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+api_key_env: GEMINI_API_KEY
 
 # Output cap for one model response. Lower it if your model's limit is smaller.
 max_tokens: 8000

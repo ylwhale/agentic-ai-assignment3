@@ -1,11 +1,34 @@
+
 {
-  "name": "read_issue",
-  "description": "Read an issue from the tracker.",
+  "name": "tracker_read_issue",
+  "description": "Read one issue from the issue tracker using its exact numeric issue number. Use this tool before investigating repository code so the issue's title, author, opening date, and reported problem are available. The result includes the semantic issue identifier and its report body. If the issue does not exist, return a repairable not-found error rather than an empty success. An issue with an empty body is valid and still returns its metadata. Limit the returned issue body to at most 4000 characters and indicate when content is truncated. This tool is read-only and does not modify the tracker.",
+  "strict": true,
   "input_schema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
-      "number": {"type": "integer", "description": "Issue number"}
+      "number": {
+        "type": "integer",
+        "description": "The exact positive integer issue number to retrieve. Use the issue number supplied by the task, not a guessed or approximate number. One call performs one tracker read without changing any data. Invalid or nonexistent issue numbers produce an actionable error."
+      }
     },
-    "required": ["number"]
-  }
+    "required": [
+      "number"
+    ]
+  },
+  "examples": [
+    {
+      "input": {
+        "number": 4192
+      },
+      "note": "Typical call: retrieve a development issue before investigating its reported problem."
+    },
+    {
+      "input": {
+        "number": 4201
+      },
+      "note": "Read an issue containing detailed failure information and a URL that must be understood before choosing which repository files to investigate."
+    }
+  ]
 }
+

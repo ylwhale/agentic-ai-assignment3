@@ -1,10 +1,10 @@
 {
   "lab": "03",
   "strict": {
-    "tools": null,
-    "optional_params": null,
-    "union_types": null,
-    "compiles": null
+  "tools": 5,
+  "optional_params": 0,
+  "union_types": 1,
+  "compiles": true
   },
   "failures": {
     "read_issue": {"transient": [], "permanent": [], "ambiguous": []},

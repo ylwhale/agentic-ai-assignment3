@@ -1,18 +1,13 @@
-"""search_repo: literal, case-insensitive text search over the private codebase.
+"""Literal, case-insensitive search over the private codebase.
 
-Its definition is search_repo.json. It reads a prebuilt index,
-fixtures/search_index/index.json, of every text file under fixtures/repo except
-config/, and the index records when it was built. With deep set, it reads the files
-themselves instead. Results come back in path order, one line each, as
-path:line: excerpt, then one line saying when the index was built, how many lines
-matched and how many are shown: the truncation and the index's age.
+Reads a prebuilt index or searches files directly when deep=True.
 
-**Malformed**, for Assignment 3 (Part A, task 1), is any of three things:
-  1. a query that is empty or only whitespace;
-  2. a query longer than MAX_QUERY_CHARS;
-  3. a filter that is not a valid glob (glob_problem, below).
-This stub answers a malformed query exactly as it answers one that matched nothing,
-"No matches.": the defect Part A removes. The two must differ in the raw response.
+Malformed queries produce ToolError with actionable feedback.
+Valid searches return JSON containing the echoed query, matching lines,
+result count, query validity, truncation status, and index age.
+
+The response_format parameter selects concise or detailed excerpts.
+Results are limited to at most HARD_CAP matching lines.
 """
 
 from __future__ import annotations
@@ -51,16 +46,30 @@ def glob_problem(pattern: str) -> str | None:
     return None
 
 
-def problem(query, filter=None) -> str | None:
-    """Why this search is malformed, or None when it is well-formed."""
-    text = str(query or "")
-    if not text.strip():
-        return "the query is empty"
-    if len(text) > MAX_QUERY_CHARS:
-        return f"the query is {len(text)} characters long; the cap is {MAX_QUERY_CHARS}"
-    if filter not in (None, ""):
-        return glob_problem(str(filter))
+
+def problem(query, path_glob=None) -> str | None:
+    """Return an actionable reason if search inputs are malformed."""
+    if not isinstance(query, str):
+        return "query must be a string"
+
+    if not query.strip():
+        return "query is empty or whitespace-only; use a non-empty code term"
+
+    if len(query) > MAX_QUERY_CHARS:
+        return f"query is {len(query)} characters long; maximum is {MAX_QUERY_CHARS}"
+
+    if path_glob is not None:
+        if not isinstance(path_glob, str):
+            return "path_glob must be a repository-relative glob string or null"
+        if not path_glob:
+            return "path_glob is empty; use null to search all paths"
+
+        invalid = glob_problem(path_glob)
+        if invalid is not None:
+            return f"invalid path_glob: {invalid}"
+
     return None
+
 
 
 def _expand(pattern: str) -> list[str]:
@@ -101,20 +110,85 @@ def age(built_at: str, now: float | None = None) -> str:
     return "today" if days < 1 else f"{days} day{'s' if days != 1 else ''} ago"
 
 
-def run(ctx, query, max_results=10, filter=None, deep=False):
-    if problem(query, filter) is not None:
-        return "No matches."
+
+def run(ctx, query, path_glob=None, max_results=10, deep=False,
+        response_format="concise"):
+    """Search the index or disk and return a bounded, machine-readable result."""
+    from tools import ToolError
+
+    # 1. Validate the query and path filter
+    error = problem(query, path_glob)
+    if error:
+        raise ToolError(
+            f"Invalid search: {error}. Correct the named argument and retry."
+        )
+
+    # 2. Validate the remaining arguments
+    if type(max_results) is not int or not 1 <= max_results <= HARD_CAP:
+        raise ToolError(
+            f"max_results must be an integer from 1 to {HARD_CAP}; "
+            "use 10 for a normal search"
+        )
+
+    if type(deep) is not bool:
+        raise ToolError(
+            "deep must be true or false; use false for the indexed search"
+        )
+
+    if response_format not in ("concise", "detailed"):
+        raise ToolError(
+            "response_format must be concise or detailed; use concise first"
+        )
+
+    # 3. Choose the search source
     repo_root = Path(ctx.repo_root)
-    if deep:
-        files, source = _disk(repo_root), "read from disk"
-    else:
-        index = load_index(repo_root.parent.parent)
-        files, source = index["files"], f"index built {index['built_at']}, {age(index['built_at'])}"
-    needle = str(query).strip().lower()
-    limit = max(1, min(int(max_results), HARD_CAP))
-    hits = [f"{rel}:{number}: {line.strip()[:160]}"
-            for rel, lines in sorted(files.items()) if _matches(rel, filter)
-            for number, line in enumerate(lines, 1) if needle in line.lower()]
-    if not hits:
-        return "No matches."
-    return "\n".join(hits[:limit]) + f"\n[{source}; {len(hits)} matches, {min(limit, len(hits))} shown]"
+    index = load_index(repo_root.parent.parent)
+
+    files = _disk(repo_root) if deep else index["files"]
+    source = "disk" if deep else "index"
+
+    # 4. Choose the excerpt size
+    excerpt_cap = 160 if response_format == "concise" else 500
+    needle = query.strip().lower()
+
+    # 5. Search matching lines
+    hits = []
+    matched = 0
+    clipped_excerpt = False
+
+    for rel, lines in sorted(files.items()):
+        if not _matches(rel, path_glob):
+            continue
+
+        for line_number, line in enumerate(lines, 1):
+            if needle not in line.lower():
+                continue
+
+            matched += 1
+
+            if len(hits) >= max_results:
+                continue
+
+            snippet = line.strip()
+            clipped = len(snippet) > excerpt_cap
+            clipped_excerpt = clipped_excerpt or clipped
+
+            hits.append({
+                "path": rel,
+                "line": line_number,
+                "excerpt": snippet[:excerpt_cap],
+                "excerpt_truncated": clipped,
+            })
+
+    # 6. Return structured JSON
+    return json.dumps({
+        "query": query,
+        "query_valid": True,
+        "count": matched,
+        "results": hits,
+        "truncated": matched > len(hits) or clipped_excerpt,
+        "index_age": age(index["built_at"]),
+        "source": source,
+        "response_format": response_format,
+    }, ensure_ascii=False)
+

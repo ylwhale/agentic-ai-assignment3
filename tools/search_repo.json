@@ -1,14 +1,62 @@
+
 {
-  "name": "search_repo",
-  "description": "Search the code.",
+  "name": "code_search_repo",
+  "description": "Search the repository for lines containing a literal, case-insensitive query. Use this before reading a specific file. Return at most 20 matching lines, capped by max_results. A valid query with no matches is a successful empty result: count is 0 and query_valid is true. A malformed query or invalid path glob produces an error rather than an empty success. The JSON result echoes query and includes count, query_valid, results, truncated, and index_age so the caller can tell whether matches were omitted or the search index may be stale.",
+  "strict": true,
   "input_schema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
-      "query": {"type": "string", "description": "Text to look for"},
-      "max_results": {"type": "integer", "description": "How many results. Default 10."},
-      "filter": {"type": "string", "description": "Optional filter expression"},
-      "deep": {"type": "boolean", "description": "Whether to do a deep search. Default false."}
+      "query": {
+        "type": "string",
+        "description": "Literal code text to search for, case-insensitively, not a regular expression. Maximum 200 characters; an empty or whitespace-only query is invalid. Use a specific identifier or error fragment to reduce irrelevant results and output tokens."
+      },
+      "path_glob": {
+        "type": ["string", "null"],
+        "description": "Repository-relative file path glob, such as src/*.ts, or null to search all indexed files. Choose a glob when the file area is known; narrowing the scope reduces search work and output size. Invalid globs produce a repairable error."
+      },
+      "max_results": {
+        "type": "integer",
+        "description": "Maximum number of matching lines to return, from 1 to 20. Use 10 for ordinary searches; higher values increase the response token cost."
+      },
+      "deep": {
+        "type": "boolean",
+        "description": "False searches the fast prebuilt index; true reads repository files from disk when freshness matters. Deep search costs more execution time and disk I/O."
+      },
+      "response_format": {
+        "type": "string",
+        "enum": ["concise", "detailed"],
+        "description": "Use concise for short excerpts and lower token cost. Use detailed when additional matching-line context is needed, at a higher token cost."
+      }
     },
-    "required": ["query"]
-  }
+    "required": [
+      "query",
+      "path_glob",
+      "max_results",
+      "deep",
+      "response_format"
+    ]
+  },
+  "examples": [
+    {
+      "input": {
+        "query": "setBusy",
+        "path_glob": null,
+        "max_results": 10,
+        "deep": false,
+        "response_format": "concise"
+      },
+      "note": "Typical first search for a likely code identifier using the fast index and concise excerpts."
+    },
+    {
+      "input": {
+        "query": "export",
+        "path_glob": "src/*.ts",
+        "max_results": 20,
+        "deep": true,
+        "response_format": "detailed"
+      },
+      "note": "Search a known folder directly from disk if the index might be stale."
+    }
+  ]
 }

@@ -1,14 +1,55 @@
+
 {
-  "name": "open_pr",
-  "description": "Open a pull request.",
+  "name": "pulls_open_pr",
+  "description": "Open one draft pull request in the mock pull request tracker for an existing issue. Use this tool after investigating the issue and preparing an approved triage comment, but before publishing that comment. Open a PR only when the triage identifies a specific repository file; if the file is none, skip this tool entirely. The branch must be repomind/issue-<number>, where number matches the issue being triaged. The PR body must name the proposed file and explain the intended change in prose. This tool creates a draft proposal, not a code commit or patch. A successful call returns a confirmation containing the PR identifier and branch, capped at 300 characters. An empty title, empty body, invalid branch, or nonexistent issue produces an actionable error rather than an empty success. Opening a PR is a persistent write. The harness supplies an idempotency key internally and checks existing PRs before retrying; the model must not generate the key.",
+  "strict": true,
   "input_schema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
-      "number": {"type": "integer", "description": "Issue number"},
-      "branch": {"type": "string", "description": "Branch"},
-      "title": {"type": "string", "description": "Title"},
-      "body": {"type": "string", "description": "Body"}
+      "number": {
+        "type": "integer",
+        "description": "Exact positive integer issue number associated with the proposed pull request. Use the issue number supplied by the current task. One call attempts to create one persistent draft PR. Invalid or nonexistent issue numbers produce an actionable error."
+      },
+      "branch": {
+        "type": "string",
+        "description": "Source branch for the draft PR. Use exactly repomind/issue-<number>, substituting the issue number from the number argument. Do not invent another branch name. The branch identifies the PR during readback checks and retries."
+      },
+      "title": {
+        "type": "string",
+        "description": "Short, non-empty title summarizing the proposed change. Name the problem or intended fix without claiming that code has already been modified. Keep the title concise to reduce output and review cost."
+      },
+      "body": {
+        "type": "string",
+        "description": "Non-empty prose describing the proposed change. Name the exact repository-relative file identified during triage, explain what should change and why, and ground the proposal in the investigated issue. Do not claim the patch has already been implemented. This text is stored persistently in the draft PR."
+      }
     },
-    "required": ["number", "branch", "title", "body"]
-  }
+    "required": [
+      "number",
+      "branch",
+      "title",
+      "body"
+    ]
+  },
+  "examples": [
+    {
+      "input": {
+        "number": 4192,
+        "branch": "repomind/issue-4192",
+        "title": "Restore export button after a failed export",
+        "body": "Proposed change in src/components/ExportButton.tsx: ensure the loading state is reset when an export request fails so users can retry without reloading the page."
+      },
+      "note": "Typical call: open a draft PR proposing a fix for the reported export button issue, before posting the final triage comment."
+    },
+    {
+      "input": {
+        "number": 4191,
+        "branch": "repomind/issue-4191",
+        "title": "Correct README instructions for running locally",
+        "body": "Proposed change in README.md: replace the unsupported npm run serve instruction with the correct local development command after confirming the available scripts in package.json."
+      },
+      "note": "Harder case: open a draft PR for a documentation issue rather than a code defect, with a proposal grounded in the repository documentation and package scripts."
+    }
+  ]
 }
+

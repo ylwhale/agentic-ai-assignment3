@@ -1,12 +1,40 @@
+
 {
-  "name": "post_comment",
-  "description": "Post a comment on an issue.",
+  "name": "tracker_post_comment",
+  "description": "Publish one final triage comment on an existing issue in the tracker. Use this tool only after investigating the issue, preparing the comment, and opening a draft pull request when a specific file is proposed. Posting a comment is a persistent write visible to issue readers, so this must be the final step. The body must begin with 'label: bug', 'label: feature', 'label: question', or 'label: docs', followed by a second line containing 'file: <path>' or 'file: none'. A missing issue or empty comment body is an error, not an empty success. A successful call returns a confirmation capped at 300 characters, including the comment identifier and issue number. The harness supplies an idempotency key internally to prevent duplicate comments during retries; the model must not generate this key.",
+  "strict": true,
   "input_schema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
-      "number": {"type": "integer", "description": "Issue number"},
-      "body": {"type": "string", "description": "Comment text"}
+      "number": {
+        "type": "integer",
+        "description": "Exact positive integer issue number on which to publish the comment. Use the issue number supplied by the current task. This operation writes to the tracker and is visible to issue readers. Invalid or nonexistent numbers cause an actionable error."
+      },
+      "body": {
+        "type": "string",
+        "description": "Final user-visible triage comment. The first line must be 'label: bug', 'label: feature', 'label: question', or 'label: docs'. The second line must be 'file: <repository-relative path>' or 'file: none'. Add a concise explanation grounded in the issue and inspected files. Empty or whitespace-only comments are rejected. Do not include secrets or unverified claims. This is a persistent write, not a draft."
+      }
     },
-    "required": ["number", "body"]
-  }
+    "required": [
+      "number",
+      "body"
+    ]
+  },
+  "examples": [
+    {
+      "input": {
+        "number": 4192,
+        "body": "label: bug\nfile: src/components/ExportButton.tsx\nThe export button remains disabled after a failed request. Investigate whether the loading state is reset when an error occurs."
+      },
+      "note": "Typical call: publish a final bug triage comment naming a relevant code file after the draft PR step."
+    },
+    {
+      "input": {
+        "number": 4191,
+        "body": "label: docs\nfile: README.md\nThe documented npm run serve command does not exist. Update the local-running instructions to reflect the project's supported commands."
+      },
+      "note": "Harder case: document a documentation issue rather than a code defect, using a documentation file as the proposed change location."
+    }
+  ]
 }

@@ -1,40 +1,141 @@
-"""read_file: return one file of the private codebase, whole.
 
-Its definition is read_file.json. It reads the same files search_repo searches:
-everything under fixtures/repo except config/. A path is relative to
-fixtures/repo, as search results print it.
+"""Read repository text files using exact, case-sensitive paths.
 
-It asks the file system whether the path exists. On a case-insensitive disk, which
-is macOS's default, src/report.ts then opens src/Report.ts and reports success
-(Assignment 3, Part B, task 3).
+The model-facing interface is defined in read_file.json.
+Results are bounded JSON objects. Invalid paths produce actionable
+ToolError messages.
 """
 
+from __future__ import annotations
+
+import json
+from difflib import get_close_matches
 from pathlib import Path
 
-MAX_CHARS = 20_000   # a longer file comes back cut, with a note saying so
+CONCISE_CHARS = 4_000
+DETAILED_CHARS = 20_000
 
 
-def run(ctx, path):
+def run(ctx, path, response_format="concise"):
     from harness.formats import normalize_path
     from tools import ToolError
     from tools.search_repo import EXCLUDED_DIRS
 
-    rel = normalize_path(str(path))
+    # 1. Validate arguments
+    if not isinstance(path, str):
+        raise ToolError(
+            "Invalid path: supply a repository-relative filename as a string."
+        )
+
+    if response_format not in ("concise", "detailed"):
+        raise ToolError(
+            "Invalid response_format: use 'concise' or 'detailed'."
+        )
+
+    rel = normalize_path(path)
     if rel in (None, "none"):
-        raise ToolError("path is empty")
+        raise ToolError(
+            "Invalid path: supply an existing repository-relative filename."
+        )
+
+    # 2. Prevent access outside the repository
     root = Path(ctx.repo_root).resolve()
     target = (root / rel).resolve()
+
     if root != target and root not in target.parents:
-        raise ToolError(f"{path} is outside the repository")
-    parts = target.relative_to(root).parts
-    if set(parts) & EXCLUDED_DIRS:
-        raise ToolError(f"{path} is not readable")
-    if not target.is_file():
-        raise ToolError(f"no such file: {path}")
+        raise ToolError(
+            f"Invalid path '{path}': file is outside the repository. "
+            "Use a path under the repository root."
+        )
+
+    if (set(Path(rel).parts) & EXCLUDED_DIRS
+            or set(target.relative_to(root).parts) & EXCLUDED_DIRS):
+        raise ToolError(
+            f"Invalid path '{path}': excluded directory. "
+            "Choose a readable repository source file."
+        )
+
+    # 3. Build a list of exact existing filenames
+    available = []
+
+    for candidate in root.rglob("*"):
+        candidate_rel = candidate.relative_to(root)
+
+        if set(candidate_rel.parts) & EXCLUDED_DIRS:
+            continue
+
+        if not candidate.is_file():
+            continue
+
+        actual = candidate.resolve()
+
+        if root != actual and root not in actual.parents:
+            continue
+
+        if set(actual.relative_to(root).parts) & EXCLUDED_DIRS:
+            continue
+
+        available.append(candidate_rel.as_posix())
+
+    # 4. Check the requested filename, including capitalization
+    if rel not in available:
+
+        # Prioritize filenames differing only in capitalization
+        closest_case = [
+            name for name in available
+            if name.casefold() == rel.casefold()
+        ]
+
+        # Find other similarly named files
+        nearby = closest_case + [
+            name for name in get_close_matches(
+                rel, available, n=5, cutoff=0.6
+            )
+            if name not in closest_case
+        ]
+
+        if nearby:
+            raise ToolError(
+                f"File path '{rel}' does not exist with that exact spelling. "
+                f"Similar existing paths: {', '.join(nearby[:5])}. "
+                "Retry with one of the exact paths, including case."
+            )
+
+        raise ToolError(
+            f"File path '{rel}' does not exist. "
+            "Find a real filename with code_search_repo "
+            "and retry using the exact path."
+        )
+
+    # 5. Read the file
     try:
-        text = target.read_text()
+        text = target.read_text(encoding="utf-8")
+
     except UnicodeDecodeError:
-        raise ToolError(f"{path} is not a text file")
-    if len(text) > MAX_CHARS:
-        return text[:MAX_CHARS] + f"\n[cut at {MAX_CHARS:,} of {len(text):,} characters]"
-    return text
+        raise ToolError(
+            f"File '{rel}' is not UTF-8 text. "
+            "Choose a text source file."
+        ) from None
+
+    except OSError:
+        raise ToolError(
+            f"File '{rel}' could not be read. "
+            "Choose an accessible text file."
+        ) from None
+
+    # 6. Apply the response size limit
+    cap = (
+        CONCISE_CHARS
+        if response_format == "concise"
+        else DETAILED_CHARS
+    )
+
+    # 7. Return a structured JSON result
+    return json.dumps({
+        "path": rel,
+        "content": text[:cap],
+        "total_chars": len(text),
+        "truncated": len(text) > cap,
+        "response_format": response_format,
+    }, ensure_ascii=False)
+

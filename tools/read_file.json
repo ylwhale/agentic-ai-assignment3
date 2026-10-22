@@ -1,11 +1,45 @@
+
 {
-  "name": "read_file",
-  "description": "Read a file.",
+  "name": "code_read_file",
+  "description": "Read a text file from the repository using its exact case-sensitive, repository-relative path. Use this tool after locating a relevant file through code_search_repo. Return the file's content and metadata including its path, total character count, and whether the content was truncated. Concise mode returns at most 4000 content characters; detailed mode returns at most 20000 content characters. An existing empty file is a successful result with empty content. A missing file, invalid path, inaccessible file, or incorrect filename capitalization produces an actionable error rather than an empty result. The error suggests similar existing filenames when available. This tool is read-only and does not modify the repository.",
+  "strict": true,
   "input_schema": {
     "type": "object",
+    "additionalProperties": false,
     "properties": {
-      "path": {"type": "string", "description": "File path"}
+      "path": {
+        "type": "string",
+        "description": "Exact repository-relative path of the file to read, including its extension and capitalization, such as src/components/ExportButton.tsx. Obtain the path from repository search results. Paths outside the repository, excluded directories, and nonexistent files are rejected. Reading a specific file avoids the cost of another broad search."
+      },
+      "response_format": {
+        "type": "string",
+        "enum": [
+          "concise",
+          "detailed"
+        ],
+        "description": "Use concise for the first read, returning at most 4000 content characters with lower output token cost. Use detailed when more source code is needed, returning at most 20000 content characters at a higher token cost. Both modes report truncation."
+      }
     },
-    "required": ["path"]
-  }
+    "required": [
+      "path",
+      "response_format"
+    ]
+  },
+  "examples": [
+    {
+      "input": {
+        "path": "src/components/ExportButton.tsx",
+        "response_format": "concise"
+      },
+      "note": "Typical call: read a relevant component using a path obtained from code_search_repo, with a concise response."
+    },
+    {
+      "input": {
+        "path": "src/Report.ts",
+        "response_format": "detailed"
+      },
+      "note": "Read a file whose capitalization must match exactly. Use detailed mode when the initial excerpt is insufficient. The path src/report.ts is not the same file."
+    }
+  ]
 }
+
