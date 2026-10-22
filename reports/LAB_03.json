@@ -1,0 +1,33 @@
+{
+  "lab": "03",
+  "strict": {
+    "tools": null,
+    "optional_params": null,
+    "union_types": null,
+    "compiles": null
+  },
+  "failures": {
+    "read_issue": {"transient": [], "permanent": [], "ambiguous": []},
+    "search": {"transient": [], "permanent": [], "ambiguous": []},
+    "read_file": {"transient": [], "permanent": [], "ambiguous": []},
+    "comment": {"transient": [], "permanent": [], "ambiguous": []},
+    "open_pr": {"transient": [], "permanent": [], "ambiguous": []}
+  },
+  "protocol_error_policy": null,
+  "surface": {
+    "tokens_before": null,
+    "tokens_after": null,
+    "list_tokens_before": null,
+    "list_tokens_after": null,
+    "calls_per_run": null,
+    "cost_per_run_before": null,
+    "cost_per_run_after": null,
+    "cost_per_run_all_five": null
+  },
+  "writes": {
+    "harness": {"runs": null, "comments_per_run_max": null, "duplicate_comment_runs": null, "prs_correct_runs": null,
+                "committed_timeouts": null, "escalated": null, "triage_passes": null},
+    "control": {"runs": null, "comments_per_run_max": null, "duplicate_comment_runs": null, "prs_correct_runs": null,
+                "committed_timeouts": null, "escalated": null, "triage_passes": null}
+  }
+}

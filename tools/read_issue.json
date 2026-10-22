@@ -1,0 +1,11 @@
+{
+  "name": "read_issue",
+  "description": "Read an issue from the tracker.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "number": {"type": "integer", "description": "Issue number"}
+    },
+    "required": ["number"]
+  }
+}

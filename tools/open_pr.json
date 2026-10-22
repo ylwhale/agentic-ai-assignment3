@@ -1,0 +1,14 @@
+{
+  "name": "open_pr",
+  "description": "Open a pull request.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "number": {"type": "integer", "description": "Issue number"},
+      "branch": {"type": "string", "description": "Branch"},
+      "title": {"type": "string", "description": "Title"},
+      "body": {"type": "string", "description": "Body"}
+    },
+    "required": ["number", "branch", "title", "body"]
+  }
+}

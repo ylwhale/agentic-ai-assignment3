@@ -1,0 +1,14 @@
+{
+  "name": "search_repo",
+  "description": "Search the code.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "query": {"type": "string", "description": "Text to look for"},
+      "max_results": {"type": "integer", "description": "How many results. Default 10."},
+      "filter": {"type": "string", "description": "Optional filter expression"},
+      "deep": {"type": "boolean", "description": "Whether to do a deep search. Default false."}
+    },
+    "required": ["query"]
+  }
+}

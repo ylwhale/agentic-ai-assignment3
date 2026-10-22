@@ -1,0 +1,12 @@
+{
+  "name": "post_comment",
+  "description": "Post a comment on an issue.",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "number": {"type": "integer", "description": "Issue number"},
+      "body": {"type": "string", "description": "Comment text"}
+    },
+    "required": ["number", "body"]
+  }
+}
