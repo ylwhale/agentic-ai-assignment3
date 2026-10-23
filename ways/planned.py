@@ -186,13 +186,95 @@ class Executor:
         return self.record(step, args, result)
 
     def filled(self, step: dict, args: dict) -> dict | None:
-        to_fill = [k for k, v in args.items() if v == FILL]
-        if not to_fill:
-            return args
-        filled = self.fill(step, args, to_fill)
+        """Repair a planner's missing/obsolete fields, then fill every required input.
+
+        This only prepares arguments for the selected on-plan tool. The registry
+        still validates the final call independently and rejects malformed input.
+        """
+        tool = step.get("tool")
+        schema = next((s for s in self.ctx.tools.schemas if s["name"] == tool), None)
+        if schema is None:
+            self.record(step, args, None, "unknown_tool")
+            self.ctx.trace.end("escalated", detail=f"step {step.get('id')}: no schema for {tool}")
+            return None
+
+        input_schema = schema["input_schema"]
+        props = input_schema.get("properties") or {}
+        required = input_schema.get("required") or []
+        kind = role(tool)
+        prepared = dict(args)
+
+        # The issue number is set by the run, not guessed by a planner or model.
+        if kind in ("read_issue", "comment", "open_pr"):
+            number_key = arg(kind, "number")
+            legacy_number = prepared.pop("issue_number", None)
+            supplied_number = prepared.get(number_key, legacy_number)
+            if (type(supplied_number) is int and
+                    supplied_number != self.ctx.issue_number):
+                self.record(step, prepared, None, "wrong_issue")
+                self.ctx.trace.end("escalated", detail=f"step {step.get('id')}: wrong issue number")
+                return None
+            prepared[number_key] = self.ctx.issue_number
+
+        if kind == "open_pr":
+            branch_key = arg("open_pr", "branch")
+            expected_branch = f"repomind/issue-{self.ctx.issue_number}"
+            branch = prepared.get(branch_key)
+            if branch not in (None, "", FILL, expected_branch):
+                self.record(step, prepared, None, "wrong_branch")
+                self.ctx.trace.end("escalated", detail=f"step {step.get('id')}: wrong PR branch")
+                return None
+            prepared[branch_key] = expected_branch
+
+        # Supply deterministic schema fields that do not need model judgment.
+        if kind == "search":
+            prepared.setdefault(arg("search", "path"), None)
+            prepared.setdefault("max_results", 10)
+            prepared.setdefault("deep", False)
+            prepared.setdefault("response_format", "concise")
+        elif kind == "read_file":
+            prepared.setdefault("response_format", "concise")
+
+        # Plans are untrusted model output. Obsolete fields (such as
+        # issue_number/file/patch) are not passed to the strict registry.
+        extra = [k for k in prepared if k not in props]
+        if extra:
+            self.ctx.trace.event("plan_args_normalized", step=step.get("id"), removed=extra)
+            prepared = {k: v for k, v in prepared.items() if k in props}
+
+        # A comment with invalid headers must be redrafted, not published as-is.
+        if kind == "comment":
+            body_key = arg("comment", "body")
+            body = prepared.get(body_key)
+            if isinstance(body, str) and body != FILL:
+                label, file = parse_triage_comment(body)
+                if label not in ("bug", "feature", "question", "docs") or file is None:
+                    prepared[body_key] = FILL
+
+        # Missing required arguments need filling just like explicit "$fill".
+        # Existing valid plan-fixed values continue to take precedence.
+        keys = []
+        for key in required:
+            value = prepared.get(key, FILL)
+            if key not in prepared or value == FILL or value == "" or (
+                    value is None and not allows_null(props.get(key, {}))):
+                prepared[key] = FILL
+                keys.append(key)
+        keys.extend(k for k, value in prepared.items() if value == FILL and k not in keys)
+
+        if not keys:
+            problems = schema_errors(prepared, input_schema)
+            if not problems:
+                return prepared
+            # Invalid fixed values must not be dispatched to the registry.
+            self.record(step, prepared, None, "invalid_plan_args")
+            self.ctx.trace.end("escalated", detail=f"step {step.get('id')}: invalid plan arguments: {problems}")
+            return None
+
+        filled = self.fill(step, prepared, keys)
         if filled is None:
-            self.record(step, args, None, "off_plan")
-            self.ctx.trace.end("escalated", detail=f"step {step.get('id')}: no on-plan call in {MAX_FILL_TRIES} tries")
+            self.record(step, prepared, None, "off_plan")
+            self.ctx.trace.end("escalated", detail=f"step {step.get('id')}: no valid on-plan call in {MAX_FILL_TRIES} tries")
         return filled
 
     def fill(self, step: dict, args: dict, keys: list[str], *, system: str = "executor.md",
@@ -220,12 +302,16 @@ class Executor:
                 if any(k not in filled or filled[k] in ("", FILL) or (filled[k] is None and k not in nullable)
                        for k in keys):
                     continue
+                # A tool call may still violate its schema even when the vendor
+                # accepts strict=True. Reject locally and allow one repair try.
+                if schema_errors(filled, schema["input_schema"]):
+                    continue
                 if role(step["tool"]) == "comment":
                     body = arg("comment", "body")
                     label, file = parse_triage_comment(str(filled[body]))
                     if label not in ("bug", "feature", "question", "docs") or file is None:
                         continue
-                    # Keep the explanation instead of reducing the draft to two header lines.
+                    # Keep the explanation instead of reducing it to two lines.
                     filled[body] = str(filled[body])
                 return filled
         return None
@@ -240,8 +326,12 @@ class Executor:
 
     def fill_request(self, step: dict, fixed: dict, keys: list[str], note: str = "") -> str:
         parts = [f"Triage issue #{self.ctx.issue_number}. You are running step {step.get('id')} of a fixed "
-                 f"plan: {step.get('action')}. Call {step['tool']} once. Fill in: {', '.join(keys)}. "
-                 f"The plan fixes: {json.dumps(fixed)}."]
+                 f"plan: {step.get('action')}. Call ONLY {step['tool']} once; do not call another "
+                 f"tool, propose a plan, or give a text-only answer. "
+                 f"Provide these missing required arguments: {', '.join(keys)}. "
+                 f"Preserve these plan-fixed arguments exactly: {json.dumps(fixed)}. "
+                 "Use the exact argument names shown in the offered tool's input schema; "
+                 "do not invent keys such as issue_number, file, or patch."]
         if role(step["tool"]) == "comment":
             parts.append("The comment's first two lines must be:\nlabel: <bug | feature | question | docs>\n"
                          "file: <path relative to the repository root, or none>")
