@@ -46,8 +46,12 @@ Every step needs:
 Use "$fill" for argument values that depend on earlier results.
 The issue number is already known.
 
-For repository search, prefer max_results 10, deep false,
-response_format "concise", and path_glob null unless a filter is known.
+For repository search, prefer max_results 10, deep false, and
+response_format "concise". For the initial source-code search, use
+path_glob "src/**" to prevent README/CHANGELOG and documentation hits from
+consuming the limited first page of matches. Use query "$fill" when the issue
+has not yet been read. A specific function or component name is more useful
+than a generic term such as "export".
 
 For file reads, prefer response_format "concise".
 

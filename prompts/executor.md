@@ -14,8 +14,10 @@ Tool guidance:
   Read the issue using its exact issue number.
 
 - code_search_repo:
-  Search using a short literal term likely to appear in relevant code.
-  Searches match source-code lines case-insensitively, not filenames.
+  Search using a short, distinctive literal identifier or error fragment
+  from the issue or prior results. "ExportButton" is more discriminating
+  than "Export"; broad terms can return only unrelated files in the first
+  ten matches. Searches match source-code lines case-insensitively, not filenames.
   Use path_glob null unless a valid file-path glob is appropriate.
   Use max_results 10, deep false, and response_format "concise"
   unless further detail or a fresh disk search is necessary.

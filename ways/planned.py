@@ -167,7 +167,16 @@ class Executor:
             if result is None:
                 return
             if kind == "search" and (first or str(step.get("id")) in self.revised):
-                self.checkpoint(CHECKPOINT, any(SOURCE.match(p) for p in result.get("paths") or []))
+                found_source = any(SOURCE.match(p) for p in result.get("paths") or [])
+                revised = self.checkpoint(CHECKPOINT, found_source)
+                if not found_source and not revised:
+                    # No observed source path is available for the next read_file
+                    # step. Never solicit an unplanned search during that read.
+                    self.ctx.trace.end(
+                        "escalated",
+                        detail="search found no source path, and no valid recovery search is planned",
+                    )
+                    return
 
     # -- one step ------------------------------------------------------------------------
     def run_step(self, step: dict) -> dict | None:
@@ -242,14 +251,25 @@ class Executor:
             self.ctx.trace.event("plan_args_normalized", step=step.get("id"), removed=extra)
             prepared = {k: v for k, v in prepared.items() if k in props}
 
-        # A comment with invalid headers must be redrafted, not published as-is.
+        # The planner cannot know the final file before investigation. A marker
+        # embedded inside a larger string is *not* a resolved file or draft.
         if kind == "comment":
             body_key = arg("comment", "body")
             body = prepared.get(body_key)
             if isinstance(body, str) and body != FILL:
                 label, file = parse_triage_comment(body)
-                if label not in ("bug", "feature", "question", "docs") or file is None:
+                if (label not in ("bug", "feature", "question", "docs")
+                        or file is None or FILL in body):
                     prepared[body_key] = FILL
+
+        # A prewritten generic PR body must not bypass the exact-file check.
+        # Ask the on-plan tool to draft it from the approved comment instead.
+        if kind == "open_pr" and self.prepared_file not in (None, "none"):
+            body_key = arg("open_pr", "body")
+            body = prepared.get(body_key)
+            if (not isinstance(body, str) or FILL in body
+                    or self.prepared_file not in body):
+                prepared[body_key] = FILL
 
         # Missing required arguments need filling just like explicit "$fill".
         # Existing valid plan-fixed values continue to take precedence.
@@ -308,11 +328,17 @@ class Executor:
                     continue
                 if role(step["tool"]) == "comment":
                     body = arg("comment", "body")
-                    label, file = parse_triage_comment(str(filled[body]))
-                    if label not in ("bug", "feature", "question", "docs") or file is None:
+                    draft = str(filled[body])
+                    label, file = parse_triage_comment(draft)
+                    if (label not in ("bug", "feature", "question", "docs")
+                            or file is None or FILL in draft):
                         continue
                     # Keep the explanation instead of reducing it to two lines.
-                    filled[body] = str(filled[body])
+                    filled[body] = draft
+                if (role(step["tool"]) == "open_pr"
+                        and self.prepared_file not in (None, "none")
+                        and self.prepared_file not in str(filled.get(arg("open_pr", "body"), ""))):
+                    continue
                 return filled
         return None
 
@@ -365,12 +391,80 @@ class Executor:
         return entry
 
     # -- revision, at the checkpoint whose check failed --------------------------------------
+    def recover_source_search(self, proposed: dict) -> dict:
+        """Ensure a failed source-search checkpoint has a *planned* next search.
+
+        A weak reviser sometimes rewrites the action of a completed search or
+        renames the pending read_file step without adding a fresh search. The
+        completed search cannot be re-executed, so the model then tries to call
+        search from the read_file step. Instead, add a bounded, source-scoped
+        search to the revised plan, before the pending file read. The trace
+        records the repair and only the resulting plan's steps can execute.
+        """
+        steps = proposed.get("steps") or []
+        # A changed FAILED step is runnable again under checkpoint(), while a
+        # completed step is immutable. Count either a new search or a changed
+        # failed search as an already-planned recovery; do not create duplicates.
+        failed = {str(r["id"]) for r in self.results if r["status"] == "failed"}
+        previous = {str(s.get("id")): {k: v for k, v in s.items() if k != "status"}
+                    for s in self.plan.get("steps") or []}
+
+        def runnable(s):
+            sid = str(s.get("id"))
+            after = {k: v for k, v in s.items() if k != "status"}
+            return sid not in self.ran or (sid in failed and previous.get(sid) != after)
+
+        # A source search after the file read cannot supply that read's path.
+        read_index = next((i for i, s in enumerate(steps)
+                           if role(s.get("tool")) == "read_file" and runnable(s)), None)
+        if read_index is None:
+            return proposed
+        if any(role(s.get("tool")) == "search" and runnable(s)
+               for s in steps[:read_index]):
+            return proposed
+        last_search = next((r for r in reversed(self.results)
+                            if role(r.get("tool")) == "search"), None)
+        if last_search is None:
+            return proposed
+
+        amended = copy.deepcopy(proposed)
+        steps = amended["steps"]
+        new_id = max((s["id"] for s in steps if isinstance(s.get("id"), int)), default=0) + 1
+        search_step = {
+            "id": new_id,
+            "action": "Search source files with a more specific term from the issue and prior results",
+            "tool": tool_for("search"),
+            "args_json": json.dumps({
+                arg("search", "query"): FILL,
+                arg("search", "path"): "src/**",
+                "max_results": 10,
+                "deep": False,
+                "response_format": "concise",
+            }),
+            "depends_on": [last_search["id"]],
+            "expected_result": "Relevant TypeScript source-file paths returned from a focused search",
+            "status": "pending",
+        }
+        steps.insert(read_index, search_step)
+        read_step = steps[read_index + 1]
+        dependencies = list(read_step.get("depends_on") or [])
+        if new_id not in dependencies:
+            dependencies.append(new_id)
+        read_step["depends_on"] = dependencies
+        self.ctx.trace.event("revision_recovery", inserted_step=new_id,
+                             after_step=last_search["id"],
+                             reason="reviser supplied no new search before the file read")
+        return amended
+
     def checkpoint(self, name: str, ok: bool) -> bool:
         """True when a new version is now active."""
         if ok or self.revisions >= MAX_REVISIONS:
             return False
         self.revisions += 1
         proposed = revise_plan(self.ctx.client, self.plan, self.results, trace=self.ctx.trace)
+        # A revised read_file must have a fresh preceding search if the first
+        # search exposed no source. Repair the PLAN, not the executor's tool list.
+        proposed = self.recover_source_search(proposed)
         broken = schema_check(self.ctx, proposed, self.version + 1)
         verdict = {"valid": False, "failures": broken} if broken else validate(proposed)
         self.ctx.trace.event("revision", checkpoint=name, version=self.version + 1, valid=verdict["valid"],
