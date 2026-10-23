@@ -14,6 +14,6 @@ Removals are logged like additions.
 - **Constrained:** every tool call to a step of a validated plan; revisions to steps not yet done; the comment to drafts that pass the second pass
 
 ## Assignment 3
-- **Added:**
-- **Removed:**
-- **Constrained:**
+- **Added:** five redesigned strict tool definitions, structured error messages, boundary validation, stable idempotency keys, readback verification, auditable write records, improved planned execution and search recovery, and regression tests.
+- **Removed:** permissive starter tool definitions, ambiguous error responses, and unsafe assumptions that a timed-out write did not commit.
+- **Constrained:** tool arguments through strict schemas and semantic validation; execution to approved plan steps; retries through stable keys and verification; PR creation before comment posting; and escalation when write outcomes cannot be confirmed.

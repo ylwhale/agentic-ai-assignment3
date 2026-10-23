@@ -1,34 +1,34 @@
 # ARCHITECTURE.md · RepoMind on the seven layers
 
-For each layer: what does this job, and where is it enforced. Cite code as a file
-path and line number joined by a colon, inside backticks; a checker opens every
-reference (`checks/FORMATS.md`, section 8). A layer held only by a sentence in a
-prompt (any file under `prompts/`) is **EMPTY**, and so is a layer nothing does
-yet. Status is one of: present, partial (say what is missing), or **EMPTY**. Each
-assignment brings this file up to date.
+For each layer: what does this job, and where is it enforced? Cite code as a file
+path and line number joined by a colon, inside backticks. The checker opens every
+reference (`checks/FORMATS.md`, section 8). A layer supported only by instructions
+in `prompts/` is **EMPTY**, as is a layer without an implementation. Status is
+`present`, `partial` (with the missing piece stated), or **EMPTY**.
 
-What each layer is for (Lecture 1, slides 42 to 44):
+The seven layers (Lecture 1, slides 42–44):
 
-- **Model**: reasoning, choosing tools, generating text.
-- **Harness**: runs the loop, builds each prompt, trims old history.
-- **Tools**: where the system acts on the world.
-- **Memory & State**: what survives a step, a session, a restart.
-- **Control & Policy**: what the system may do, and when it must ask.
-- **Observability**: a step-by-step record of what it did.
-- **Evaluation**: measuring quality, before and after release.
+- **Model:** reasoning, choosing tools, generating text.
+- **Harness:** running the loop, building prompts, and managing context and bounds.
+- **Tools:** where the system reads from and acts on the world.
+- **Memory & State:** what survives a step, a session, or a restart.
+- **Control & Policy:** what the system may do and when to stop or ask.
+- **Observability:** a step-by-step record of what happened.
+- **Evaluation:** measuring task quality and system behavior.
 
-The table below is RepoMind as Assignment 2 left it. In Assignment 3, the Tools row
-comes to cite the boundary check and the key, and any other row your work changes
-changes with it.
+The table describes the implementation after Assignment 3, including its strict
+tool boundary, write recovery, planned execution, and search recovery. The code
+references point to enforcement in Python, not just prompt instructions.
 
 | Layer | What does this job | Where it is enforced | Status |
 |---|---|---|---|
-| Model | The configured model, called only through the metered client | `harness/client.py:120` | present |
-| Harness | The loop, with three bounds checked in code; a plan validated before it runs, and an executor that runs only the plan's steps | `agent/loop.py:38`, `ways/planned.py:102`, `ways/planned.py:186` | present |
-| Tools | Five tools behind one registry (open_pr arrived with Assignment 3's starter); every write is stamped with the run_id | `tools/__init__.py:104`, `harness/tracker.py:208` | partial: nothing checks a call before it runs, and a write that fails is a guess |
-| Memory & State | A run's progress file, outside the model's context | `ways/notes.py:67` | partial: nothing survives a run |
-| Control & Policy | The second pass holds a draft that still fails; nothing else decides which writes need a person | `ways/planned.py:272` | partial |
-| Observability | One trace line per model call and per tool call, and the plan as data before it runs | `agent/loop.py:50`, `ways/planned.py:76` | partial: traces, no alerts |
-| Evaluation | The grounded check reads the tracker, never the agent | `eval/check_triage.py:7` | partial: offline only |
+| Model | The configured model performs reasoning and generates plans, argument values, and text through the metered model client. The client records usage and cost. | `harness/client.py:120`, `harness/client.py:127` | present |
+| Harness | The generic agent loop checks step, token, and wall-clock bounds in code. The planned workflow validates a plan before running only its approved steps; after an unsuccessful search, it can add a new source-search step through a validated revision. | `agent/loop.py:38`, `ways/planned.py:98`, `ways/planned.py:137`, `ways/planned.py:394`, `ways/planned.py:459` | present |
+| Tools | Five renamed, strictly defined tools run through one registry. The registry validates arguments before dispatch, verifies result contracts, records calls, and gives writes stable idempotency keys with prechecks and readback recovery after timeouts. The tracker stores effects under the run ID. | `tools/__init__.py:73`, `tools/__init__.py:186`, `tools/__init__.py:237`, `tools/__init__.py:263`, `tools/__init__.py:357`, `harness/tracker.py:208` | present |
+| Memory & State | The planned executor retains plan versions, step results, observed outputs, and the approved comment during a run. The notes variant writes a progress file and can compact older context, but does not automatically resume a new run from that file. | `ways/planned.py:120`, `ways/planned.py:124`, `ways/notes.py:67`, `ways/notes.py:82` | partial: per-run state and saved progress exist, but automatic cross-run restoration is not implemented |
+| Control & Policy | Plan-schema checks and step enforcement prevent unapproved tool calls. The second pass approves or holds the comment before any write; the PR must precede the comment unless the approved file is `none`. Registry policy hooks fail closed, and unknown write outcomes escalate. | `ways/planned.py:80`, `ways/planned.py:144`, `ways/planned.py:487`, `ways/planned.py:526`, `tools/__init__.py:221`, `tools/__init__.py:263` | partial: enforced checks and escalation exist, but no interactive human-approval interface is implemented |
+| Observability | The trace records model calls, offered tools, tool calls, plan versions, revisions, and terminal outcomes. An independent call record logs each tool attempt, including rejections, denials, keys, timeouts, and retries. | `harness/trace.py:57`, `harness/trace.py:79`, `harness/trace.py:97`, `harness/calls.py:47`, `tools/__init__.py:105` | partial: detailed traces and audit records exist, but automated monitoring and alerts are not implemented |
+| Evaluation | The grounded checker compares the tracker-held comment with the expected label and file. The Assignment 3 checker tests strict definitions, malformed-call rejection, write idempotency, exit behavior, and trace consistency across evaluation arms. | `eval/check_triage.py:6`, `checks/check_03.py:521`, `checks/check_03.py:631`, `checks/check_03.py:685` | partial: offline checks and measured comparisons exist, but continuous production evaluation is not implemented |
 
-**Empty layers: 0 of 7**, and five are partial.
+**Empty layers: 0 of 7.** Model, Harness, and Tools are present; Memory & State,
+Control & Policy, Observability, and Evaluation are partial as described above.

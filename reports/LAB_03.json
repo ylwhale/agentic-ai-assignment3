@@ -1,33 +1,106 @@
 {
   "lab": "03",
   "strict": {
-  "tools": 5,
-  "optional_params": 0,
-  "union_types": 1,
-  "compiles": true
+    "tools": 5,
+    "optional_params": 0,
+    "union_types": 1,
+    "compiles": true
   },
   "failures": {
-    "read_issue": {"transient": [], "permanent": [], "ambiguous": []},
-    "search": {"transient": [], "permanent": [], "ambiguous": []},
-    "read_file": {"transient": [], "permanent": [], "ambiguous": []},
-    "comment": {"transient": [], "permanent": [], "ambiguous": []},
-    "open_pr": {"transient": [], "permanent": [], "ambiguous": []}
+    "read_issue": {
+      "transient": [
+        "Temporary failure reading issue storage; retry after the storage becomes available"
+      ],
+      "permanent": [
+        "Issue number is missing, is not an integer, or is not positive",
+        "The requested issue does not exist"
+      ],
+      "ambiguous": []
+    },
+    "search": {
+      "transient": [
+        "Temporary failure accessing the search index or repository files"
+      ],
+      "permanent": [
+        "Search query is empty, whitespace-only, or exceeds the length limit",
+        "path_glob is malformed",
+        "max_results is outside the permitted range of 1 to 20",
+        "An argument has the wrong type or an unknown argument is supplied"
+      ],
+      "ambiguous": []
+    },
+    "read_file": {
+      "transient": [
+        "Temporary filesystem error while reading a repository file"
+      ],
+      "permanent": [
+        "File does not exist or its capitalization does not match the actual path",
+        "Path escapes the repository or references an excluded directory",
+        "Invalid response_format or missing required argument"
+      ],
+      "ambiguous": []
+    },
+    "comment": {
+      "transient": [
+        "A write times out and readback confirms that no comment was created, allowing a safe retry"
+      ],
+      "permanent": [
+        "The issue does not exist",
+        "Comment body is empty or lacks a valid label and file header",
+        "Required arguments are missing or invalid",
+        "A policy hook denies the write"
+      ],
+      "ambiguous": [
+        "TrackerTimeout occurs after a comment may already have committed",
+        "Readback is unavailable after a timeout, so the write outcome cannot be confirmed"
+      ]
+    },
+    "open_pr": {
+      "transient": [
+        "A write times out and readback confirms that no pull request was created, allowing a safe retry"
+      ],
+      "permanent": [
+        "The issue does not exist",
+        "Branch does not match repomind/issue-<number>",
+        "Pull request title or body is empty",
+        "Required arguments are missing or invalid",
+        "A policy hook denies the write"
+      ],
+      "ambiguous": [
+        "TrackerTimeout occurs after a pull request may already have committed",
+        "Readback is unavailable after a timeout, so the PR outcome cannot be confirmed"
+      ]
+    }
   },
-  "protocol_error_policy": null,
+  "protocol_error_policy": "end_run",
   "surface": {
-    "tokens_before": null,
-    "tokens_after": null,
-    "list_tokens_before": null,
-    "list_tokens_after": null,
-    "calls_per_run": null,
-    "cost_per_run_before": null,
-    "cost_per_run_after": null,
-    "cost_per_run_all_five": null
+    "tokens_before": 386,
+    "tokens_after": 2536,
+    "list_tokens_before": 116,
+    "list_tokens_after": 1555,
+    "calls_per_run": 5.583,
+    "cost_per_run_before": 0.0002752,
+    "cost_per_run_after": 0.0013104,
+    "cost_per_run_all_five": 0.0042478
   },
   "writes": {
-    "harness": {"runs": null, "comments_per_run_max": null, "duplicate_comment_runs": null, "prs_correct_runs": null,
-                "committed_timeouts": null, "escalated": null, "triage_passes": null},
-    "control": {"runs": null, "comments_per_run_max": null, "duplicate_comment_runs": null, "prs_correct_runs": null,
-                "committed_timeouts": null, "escalated": null, "triage_passes": null}
+    "harness": {
+      "runs": 12,
+      "comments_per_run_max": 1,
+      "duplicate_comment_runs": 0,
+      "prs_correct_runs": 12,
+      "committed_timeouts": 18,
+      "escalated": 0,
+      "triage_passes": 7
+    },
+    "control": {
+      "runs": 12,
+      "comments_per_run_max": 3,
+      "duplicate_comment_runs": 4,
+      "prs_correct_runs": 12,
+      "committed_timeouts": 10,
+      "escalated": 2,
+      "triage_passes": 3
+    }
   }
 }
